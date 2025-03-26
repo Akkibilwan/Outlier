@@ -4,13 +4,14 @@ import pandas as pd, numpy as np
 import plotly.graph_objects as go
 from datetime import timedelta
 
-### 1. SETUP & CACHING WITH SQLITE ###
+#####################################
+# 1. SETUP & CACHING WITH SQLITE
+#####################################
 DB_FILE = "cache.db"
 
 def init_db():
     conn = sqlite3.connect(DB_FILE, check_same_thread=False)
     c = conn.cursor()
-    # Cache table for individual video details
     c.execute("""
         CREATE TABLE IF NOT EXISTS video_cache (
             video_id TEXT PRIMARY KEY,
@@ -18,7 +19,6 @@ def init_db():
             last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
-    # Cache table for channel video list
     c.execute("""
         CREATE TABLE IF NOT EXISTS channel_cache (
             channel_id TEXT PRIMARY KEY,
@@ -59,7 +59,10 @@ def set_cached_channel(channel_id, data):
               (channel_id, json.dumps(data)))
     conn.commit()
 
-### 2. CONFIGURATION & CSS ###
+
+#####################################
+# 2. CONFIGURATION & CSS
+#####################################
 if "YT_API_KEY" in st.secrets:
     yt_api_key = st.secrets["YT_API_KEY"]
 else:
@@ -68,7 +71,6 @@ else:
 
 st.set_page_config(page_title="YouTube Video Outlier Analysis", page_icon="📊", layout="wide")
 
-# CSS styling for headers, cards and video items
 st.markdown("""
 <style>
     .main-header { font-size: 2rem; font-weight: 600; margin-bottom: 1rem; color: #333; }
@@ -99,9 +101,11 @@ st.markdown("""
 st.markdown("<div class='main-header'>YouTube Video Outlier Analysis</div>", unsafe_allow_html=True)
 st.markdown("Compare a video’s performance against its channel’s typical performance.")
 
-### 3. HELPER FUNCTIONS (URL extraction, duration parsing) ###
+#####################################
+# 3. HELPER FUNCTIONS (URL, duration)
+#####################################
 def extract_video_id(url):
-    """Extract video ID from various YouTube URL formats (including shorts)"""
+    """Extract video ID from standard, shortened, embed, or shorts URLs."""
     patterns = [
         r'youtube\.com/watch\?v=([^&\s]+)',
         r'youtu\.be/([^?\s]+)',
@@ -169,7 +173,9 @@ def parse_duration(duration_str):
     if seconds: total += int(seconds.group(1))
     return total
 
-### 4. YOUTUBE API FUNCTIONS WITH CACHE ###
+#####################################
+# 4. YOUTUBE API FUNCTIONS (with caching)
+#####################################
 def fetch_single_video(video_id):
     cached = get_cached_video(video_id)
     if cached:
@@ -179,7 +185,7 @@ def fetch_single_video(video_id):
     if 'items' not in res or not res['items']:
         return None
     item = res['items'][0]
-    duration = parse_duration(item['contentDetails']['duration'])
+    dur = parse_duration(item['contentDetails']['duration'])
     data = {
         'videoId': video_id,
         'title': item['snippet']['title'],
@@ -190,8 +196,8 @@ def fetch_single_video(video_id):
         'viewCount': int(item['statistics'].get('viewCount', 0)),
         'likeCount': int(item['statistics'].get('likeCount', 0)),
         'commentCount': int(item['statistics'].get('commentCount', 0)),
-        'duration': duration,
-        'isShort': duration <= 60
+        'duration': dur,
+        'isShort': dur <= 60
     }
     set_cached_video(video_id, data)
     return data
@@ -243,7 +249,7 @@ def fetch_video_details(video_ids):
             url = f"https://www.googleapis.com/youtube/v3/videos?part=contentDetails,statistics,snippet&id={ids_str}&key={yt_api_key}"
             res = requests.get(url).json()
             for item in res.get('items', []):
-                duration = parse_duration(item['contentDetails']['duration'])
+                dur = parse_duration(item['contentDetails']['duration'])
                 d = {
                     'videoId': item['id'],
                     'title': item['snippet']['title'],
@@ -254,15 +260,17 @@ def fetch_video_details(video_ids):
                     'viewCount': int(item['statistics'].get('viewCount', 0)),
                     'likeCount': int(item['statistics'].get('likeCount', 0)),
                     'commentCount': int(item['statistics'].get('commentCount', 0)),
-                    'duration': duration,
-                    'isShort': duration <= 60
+                    'duration': dur,
+                    'isShort': dur <= 60
                 }
                 details[item['id']] = d
                 set_cached_video(item['id'], d)
     return details
 
-### 5. BENCHMARK & SIMULATION FUNCTIONS ###
-DEFAULT_BAND_PERCENTAGE = 50  # fixed
+#####################################
+# 5. BENCHMARK & SIMULATION FUNCTIONS
+#####################################
+DEFAULT_BAND_PERCENTAGE = 50  # fixed default
 
 def generate_historical_data(video_details, max_days, is_short=None):
     today = datetime.date.today()
@@ -292,15 +300,15 @@ def generate_view_trajectory(video_id, days, total_views, is_short):
     else:
         k = 10
         traj = [total_views * (1/(1+np.exp(-k*((i+1)/days - 0.35)))) for i in range(days)]
-    scaling = total_views/ (traj[-1] if traj[-1]>0 else 1)
-    traj = [v*scaling for v in traj]
+    scaling = total_views / (traj[-1] if traj[-1] > 0 else 1)
+    traj = [v * scaling for v in traj]
     noise = 0.05
     for i in range(days):
-        n = np.random.normal(0, noise*total_views)
+        n = np.random.normal(0, noise * total_views)
         if i == 0:
-            noisy = max(100, traj[i]+n)
+            noisy = max(100, traj[i] + n)
         else:
-            noisy = max(traj[i-1]+10, traj[i]+n)
+            noisy = max(traj[i-1] + 10, traj[i] + n)
         traj[i] = noisy
     daily = [traj[0]] + [traj[i]-traj[i-1] for i in range(1, days)]
     for d in range(days):
@@ -313,7 +321,7 @@ def generate_view_trajectory(video_id, days, total_views, is_short):
     return data
 
 def calculate_benchmark(df):
-    lower_q = (100 - DEFAULT_BAND_PERCENTAGE)/200
+    lower_q = (100 - DEFAULT_BAND_PERCENTAGE) / 200
     upper_q = 1 - lower_q
     summary = df.groupby('day')['cumulative_views'].agg(
         lower_band=lambda x: x.quantile(lower_q),
@@ -322,11 +330,11 @@ def calculate_benchmark(df):
         mean='mean',
         count='count'
     ).reset_index()
-    summary['channel_average'] = (summary['lower_band']+summary['upper_band'])/2
+    summary['channel_average'] = (summary['lower_band'] + summary['upper_band']) / 2
     return summary
 
-def calculate_outlier_score(current, channel_avg):
-    return current/channel_avg if channel_avg > 0 else 0
+def calculate_outlier_score(current_views, channel_avg):
+    return current_views / channel_avg if channel_avg > 0 else 0
 
 def create_performance_chart(bench, video_perf, title):
     fig = go.Figure()
@@ -348,7 +356,7 @@ def create_performance_chart(bench, video_perf, title):
         line=dict(color='#34a853', width=2, dash='dot'),
         mode='lines'
     ))
-    actual = video_perf[video_perf['projected']==False]
+    actual = video_perf[video_perf['projected'] == False]
     fig.add_trace(go.Scatter(
         x=actual['day'], y=actual['cumulative_views'],
         name=f'"{title}" (Actual)',
@@ -383,13 +391,12 @@ def simulate_video_performance(video, bench):
         if day == age:
             cum = video['viewCount']
         else:
-            ratio = bench.loc[day, 'median'] / bench.loc[bench_index, 'median'] if bench.loc[bench_index, 'median']>0 else 0
+            ratio = bench.loc[day, 'median'] / bench.loc[bench_index, 'median'] if bench.loc[bench_index, 'median'] > 0 else 0
             cum = int(video['viewCount'] * ratio)
-        daily = cum if day==0 else max(0, cum - data[-1]['cumulative_views'])
+        daily = cum if day == 0 else max(0, cum - data[-1]['cumulative_views'])
         data.append({'day': day, 'daily_views': daily, 'cumulative_views': cum, 'projected': False})
     return pd.DataFrame(data)
 
-# Helper: compute outlier for a video given channel details (excluding itself)
 def compute_video_outlier(video, all_details):
     details_ex = {vid: d for vid, d in all_details.items() if vid != video['videoId']}
     try:
@@ -407,9 +414,12 @@ def compute_video_outlier(video, all_details):
     channel_avg = bench_stats.loc[day_idx, 'channel_average']
     return calculate_outlier_score(video['viewCount'], channel_avg)
 
-### 6. MAIN UI LOGIC ###
-# Sidebar: Mode selection and channel filters
+#####################################
+# 6. MAIN UI LOGIC
+#####################################
+# Sidebar: Mode selection
 mode = st.sidebar.radio("Select Mode", options=["Video Analysis", "Channel Analysis"])
+
 if mode == "Video Analysis":
     st.subheader("Enter YouTube Video/Shorts URL")
     video_url = st.text_input("Video URL", placeholder="https://www.youtube.com/watch?v=VideoID or /shorts/VideoID")
@@ -423,7 +433,7 @@ if mode == "Video Analysis":
             st.error("Failed to fetch video details.")
             st.stop()
         pub_date = datetime.datetime.fromisoformat(video_details['publishedAt'].replace('Z','+00:00')).date()
-        age = (datetime.date.today()-pub_date).days
+        age = (datetime.date.today() - pub_date).days
         channel_videos, channel_name, _ = fetch_channel_videos(video_details['channelId'])
         vid_ids = [v['videoId'] for v in channel_videos if v['videoId'] != vid]
         details = fetch_video_details(vid_ids)
@@ -446,14 +456,15 @@ if mode == "Video Analysis":
         with col3:
             st.markdown(f"<div class='metric-card'><div>Outlier Score</div><div style='font-size:24px; font-weight:bold;'>{outlier:.2f}</div></div>", unsafe_allow_html=True)
         st.markdown(f"<div class='explanation'><p><strong>What this means:</strong></p><p>An outlier score of <strong>{outlier:.2f}</strong> indicates that the video has {outlier:.2f}x the views compared to the channel average at its current age.</p></div>", unsafe_allow_html=True)
+
 else:  # Channel Analysis mode
     st.subheader("Enter YouTube Channel URL")
     channel_url = st.text_input("Channel URL", placeholder="https://www.youtube.com/channel/ChannelID or custom URL")
     sort_opt = st.selectbox("Sort Videos By", options=["Latest", "Popular", "Oldest"])
     type_opt = st.radio("Type", options=["Videos", "Shorts"], index=0)
-    output_count = st.number_input("Number of videos to display", min_value=1, max_value=50, value=10, step=1)
+    output_count = st.number_input("Number of videos to display", min_value=1, max_value=50, value=5, step=1)
     
-    # Check if a video is selected via query parameter
+    # If a video is already selected via query parameter, show its analysis
     params = st.experimental_get_query_params()
     if "video" in params:
         selected_id = params["video"][0]
@@ -466,7 +477,7 @@ else:  # Channel Analysis mode
             vid_ids = [v['videoId'] for v in channel_vids if v['videoId'] != selected['videoId']]
             details_bench = fetch_video_details(vid_ids)
             pub_date = datetime.datetime.fromisoformat(selected['publishedAt'].replace('Z','+00:00')).date()
-            age = (datetime.date.today()-pub_date).days
+            age = (datetime.date.today() - pub_date).days
             bench_df = generate_historical_data(details_bench, max_days=age, is_short=selected['isShort'])
             if bench_df.empty:
                 st.error("Not enough benchmark data for this video.")
@@ -490,30 +501,28 @@ else:  # Channel Analysis mode
         if st.button("Load Channel Videos") and channel_url:
             ch_id = extract_channel_id(channel_url)
             if not ch_id:
-                st.error("Invalid channel URL format.")
+                st.error("Could not extract a valid channel ID. Please check the URL format.")
                 st.stop()
             vids, channel_name, _ = fetch_channel_videos(ch_id)
             if not vids:
                 st.error("No videos found for this channel.")
                 st.stop()
-            # Get detailed info for all videos
             vid_ids = [v['videoId'] for v in vids]
             all_details = fetch_video_details(vid_ids)
-            # Filter by type (match video type)
+            # Filter by type
             if type_opt == "Videos":
                 filtered = [d for d in all_details.values() if not d['isShort']]
             else:
                 filtered = [d for d in all_details.values() if d['isShort']]
             # Sort based on selection
             if sort_opt == "Latest":
-                sorted_vids = sorted(filtered, key=lambda x: x['publishedAt'], reverse=True)
+                sorted_vids = sorted(filtered, key=lambda x: datetime.datetime.fromisoformat(x['publishedAt'].replace('Z','+00:00')), reverse=True)
             elif sort_opt == "Oldest":
-                sorted_vids = sorted(filtered, key=lambda x: x['publishedAt'])
+                sorted_vids = sorted(filtered, key=lambda x: datetime.datetime.fromisoformat(x['publishedAt'].replace('Z','+00:00')))
             else:  # Popular
                 sorted_vids = sorted(filtered, key=lambda x: x['viewCount'], reverse=True)
             sorted_vids = sorted_vids[:output_count]
             st.markdown(f"### {channel_name} – {type_opt} ({sort_opt})")
-            # Display video cards using HTML with clickable anchor tags
             cards_html = "<div style='display: flex; flex-wrap: wrap;'>"
             for vid in sorted_vids:
                 outlier_val = compute_video_outlier(vid, all_details)
