@@ -619,5 +619,3 @@ if st.button("Analyze Video", type="primary") and video_url:
             if benchmark_lower > 0:
                 vs_lower_pct = ((video_details['viewCount'] / benchmark_lower) - 1) * 100
                 st.metric("Compared to Lower Band", f"{vs_lower_pct:+.1f}%")
-
-
