@@ -19,7 +19,7 @@ else:
     st.error("YouTube API key not found in st.secrets. Please add it to your secrets.")
     st.stop()
 
-# Initialize SQLite DB (stored as "videos.db")
+# Initialize SQLite DB (videos.db)
 def init_db():
     with sqlite3.connect("videos.db") as conn:
         c = conn.cursor()
@@ -39,6 +39,7 @@ def init_db():
             )
         """)
         conn.commit()
+
 init_db()
 
 ############################################
@@ -65,7 +66,6 @@ st.markdown("""
         margin: 1rem 0;
         color: #ffffff;
     }
-    /* Container for input and grid */
     .input-container {
         padding: 16px;
         background-color: #1e1e1e;
@@ -79,7 +79,6 @@ st.markdown("""
         gap: 16px;
         justify-content: flex-start;
     }
-    /* Each video card */
     .video-card {
         width: 304.9px;
         background-color: #2c2c2c;
@@ -117,7 +116,6 @@ st.markdown("""
         font-size: 12px;
         color: #a0a0a0;
     }
-    /* Metric card for detailed view */
     .metric-card {
         padding: 1rem;
         border-radius: 10px;
@@ -171,7 +169,7 @@ def extract_channel_id(url):
         match = re.search(pattern, url)
         if match:
             identifier = match.group(1)
-            if pattern == patterns[0] and identifier.startswith('UC'):
+            if pattern == patterns[0] and identifier.startswith("UC"):
                 return identifier
             return get_channel_id_from_identifier(identifier)
     if url.strip().startswith("UC"):
@@ -186,8 +184,8 @@ def get_channel_id_from_identifier(identifier):
         items = res.get("items", [])
         if items:
             return items[0]["id"]["channelId"]
-    except:
-        pass
+    except Exception as e:
+        st.error(f"Error resolving channel ID: {e}")
     return None
 
 def fetch_channel_videos(channel_id, api_key):
@@ -220,7 +218,7 @@ def fetch_channel_videos(channel_id, api_key):
     return videos
 
 def fetch_video_details(video_ids, api_key):
-    """Fetch detailed information for a list of video_ids."""
+    """Fetch detailed info for a list of video_ids."""
     details = {}
     for i in range(0, len(video_ids), 50):
         chunk = video_ids[i:i+50]
@@ -248,7 +246,7 @@ def fetch_video_details(video_ids, api_key):
     return details
 
 def load_channel_videos_from_db(channel_id):
-    """Load videos for a channel from SQLite DB."""
+    """Load channel videos from SQLite DB."""
     with sqlite3.connect("videos.db") as conn:
         c = conn.cursor()
         c.execute("""
@@ -275,7 +273,7 @@ def load_channel_videos_from_db(channel_id):
     return videos
 
 def save_channel_videos_to_db(channel_id, video_list):
-    """Save a list of videos to the DB."""
+    """Save a list of videos into the DB."""
     with sqlite3.connect("videos.db") as conn:
         c = conn.cursor()
         for vid in video_list:
@@ -299,13 +297,13 @@ def save_channel_videos_to_db(channel_id, video_list):
         conn.commit()
 
 ############################################
-# 4. OUTLIER ANALYSIS FUNCTIONS (HIDDEN)
+# 4. OUTLIER ANALYSIS FUNCTIONS
 ############################################
 
 def generate_historical_data(video_map, max_days, is_short=None):
     """
     Build a simple historical dataset for each video up to max_days.
-    (Here we use a naive linear approach for demonstration.)
+    (A naive linear approach: cumulative views = fraction * total views.)
     """
     today = datetime.datetime.now().date()
     data = []
@@ -322,12 +320,13 @@ def generate_historical_data(video_map, max_days, is_short=None):
         limit = min(age, max_days)
         total = info["viewCount"]
         for d in range(limit):
-            # simple linear cumulative view count
             data.append({"videoId": vid_id, "day": d, "cumulative_views": int((d+1)*total/limit)})
     return pd.DataFrame(data)
 
 def calculate_benchmark(df):
-    """Calculate median, lower (25th) and upper (75th) bands, then average of lower and upper."""
+    """
+    Calculate the median, lower (25th) and upper (75th) bands, then channel average.
+    """
     if df.empty:
         return pd.DataFrame()
     grp = df.groupby("day")["cumulative_views"]
@@ -338,7 +337,9 @@ def calculate_benchmark(df):
     return out.reset_index()
 
 def simulate_video_performance(video_info, bench_df):
-    """Generate a naive performance trajectory for a single video."""
+    """
+    Generate a naive performance trajectory for the given video (up to its age).
+    """
     try:
         pub_date = datetime.datetime.fromisoformat(video_info["publishedAt"].replace("Z", "+00:00")).date()
         age = (datetime.datetime.now().date() - pub_date).days
@@ -350,28 +351,33 @@ def simulate_video_performance(video_info, bench_df):
         data.append({"day": d, "cumulative_views": int(video_info["viewCount"] * fraction), "projected": False})
     return pd.DataFrame(data)
 
-def classify_outlier_score(view_count, channel_avg):
-    """Compute the outlier ratio and return classification and ratio."""
+def calculate_outlier_score(current_views, channel_avg):
+    """Calculate outlier score as the ratio of current views to channel average."""
     if channel_avg <= 0:
-        return "Significant Positive Outlier", 999.9
-    ratio = view_count / channel_avg
-    if ratio >= 2.0:
-        return "Significant Positive Outlier", ratio
-    elif ratio >= 1.5:
-        return "Positive Outlier", ratio
-    elif ratio >= 1.2:
-        return "Slight Positive Outlier", ratio
-    elif ratio >= 0.8:
-        return "Normal Performance", ratio
-    elif ratio >= 0.5:
-        return "Slight Negative Outlier", ratio
+        return 0
+    return current_views / channel_avg
+
+def classify_outlier(view_count, channel_avg):
+    """Classify outlier performance using the original formula."""
+    score = calculate_outlier_score(view_count, channel_avg)
+    if score >= 2.0:
+        return "Significant Positive Outlier", score
+    elif score >= 1.5:
+        return "Positive Outlier", score
+    elif score >= 1.2:
+        return "Slight Positive Outlier", score
+    elif score >= 0.8:
+        return "Normal Performance", score
+    elif score >= 0.5:
+        return "Slight Negative Outlier", score
     else:
-        return "Significant Negative Outlier", ratio
+        return "Significant Negative Outlier", score
 
 ############################################
 # 5. SESSION STATE & USER INPUT
 ############################################
 
+# Initialize session state if not set
 if "channel_id" not in st.session_state:
     st.session_state["channel_id"] = None
 if "selected_sort" not in st.session_state:
@@ -383,7 +389,6 @@ if "analyze_clicked" not in st.session_state:
 if "selected_video" not in st.session_state:
     st.session_state["selected_video"] = None
 
-# Input form container (dark themed)
 with st.container():
     st.markdown("<div class='subheader'>Channel Analysis Setup</div>", unsafe_allow_html=True)
     col1, col2, col3 = st.columns([3,2,2])
@@ -408,11 +413,11 @@ with st.container():
                 st.session_state["selected_video"] = None
 
 ############################################
-# 6. DISPLAY TABS IF ANALYSIS IS TRIGGERED
+# 6. DISPLAY TABS (VIDEOS & SHORTS)
 ############################################
 
 if st.session_state["analyze_clicked"] and st.session_state["channel_id"]:
-    # Load channel videos from DB; if none, fetch and save
+    # Load all videos from DB; if not, fetch from API and save
     videos_db = load_channel_videos_from_db(st.session_state["channel_id"])
     if not videos_db:
         with st.spinner("Fetching channel videos from YouTube..."):
@@ -439,32 +444,36 @@ if st.session_state["analyze_clicked"] and st.session_state["channel_id"]:
                         })
                 save_channel_videos_to_db(st.session_state["channel_id"], final_list)
                 videos_db = load_channel_videos_from_db(st.session_state["channel_id"])
-    # Prepare separate lists for Videos and Shorts based on the video type
-    vids = [v for v in videos_db if not v["isShort"]]
-    shorts = [v for v in videos_db if v["isShort"]]
-    # Apply sort based on the selection ("Latest" = newest first, "Popular" = highest view count)
-    if st.session_state["selected_sort"] == "Latest":
-        vids.sort(key=lambda x: x["publishedAt"], reverse=True)
-        shorts.sort(key=lambda x: x["publishedAt"], reverse=True)
-    elif st.session_state["selected_sort"] == "Popular":
-        vids.sort(key=lambda x: x["viewCount"], reverse=True)
-        shorts.sort(key=lambda x: x["viewCount"], reverse=True)
-    # Slice to the number selected
-    vids = vids[:st.session_state["selected_count"]]
-    shorts = shorts[:st.session_state["selected_count"]]
-    
-    # Create two tabs: Videos and Shorts
+    # Separate complete lists for long-form and shorts (for outlier computation)
+    all_vids = [v for v in videos_db if not v["isShort"]]
+    all_shorts = [v for v in videos_db if v["isShort"]]
+    # For display, use the slice selected by the user
+    sort_key = st.session_state["selected_sort"]
+    if sort_key == "Latest":
+        all_vids.sort(key=lambda x: x["publishedAt"], reverse=True)
+        all_shorts.sort(key=lambda x: x["publishedAt"], reverse=True)
+    elif sort_key == "Popular":
+        all_vids.sort(key=lambda x: x["viewCount"], reverse=True)
+        all_shorts.sort(key=lambda x: x["viewCount"], reverse=True)
+    display_vids = all_vids[:st.session_state["selected_count"]]
+    display_shorts = all_shorts[:st.session_state["selected_count"]]
+
+    # Use new st.query_params API instead of experimental version
+    qp = st.query_params()
+    if "video" in qp and "tab" in qp:
+        st.session_state["selected_video"] = qp["video"][0]
+    else:
+        st.session_state["selected_video"] = None
+
+    # Two tabs: Videos and Shorts
     tabs = st.tabs(["Videos", "Shorts"])
     
-    # Function to render a grid of cards (each card shows thumbnail, title, and outlier score)
-    def render_video_grid(video_list, tab_name):
-        # To compute outlier score for each video, we build a benchmark using all videos of that type.
-        # Create a minimal dict mapping for historical data calculation.
-        info_map = {v["videoId"]: {"publishedAt": v["publishedAt"], "viewCount": v["viewCount"], "isShort": v["isShort"]} for v in video_list}
-        # For each video, use its own age as max_days.
+    # Function to render a grid of video cards
+    def render_video_grid(display_list, full_list, tab_name):
+        # Compute benchmark on the full list for that type (not just the display slice)
+        info_map = {v["videoId"]: {"publishedAt": v["publishedAt"], "viewCount": v["viewCount"], "isShort": v["isShort"]} for v in full_list}
         grid_html = "<div class='video-grid'>"
-        for v in video_list:
-            # Compute benchmark for this video type (naively using linear approach)
+        for v in display_list:
             try:
                 age = (datetime.datetime.now().date() - datetime.datetime.fromisoformat(v["publishedAt"].replace("Z","+00:00")).date()).days
             except:
@@ -480,8 +489,7 @@ if st.session_state["analyze_clicked"] and st.session_state["channel_id"]:
                 else:
                     row = bench.loc[bench["day"] == final_day]
                     channel_avg = row["channel_average"].values[0] if not row.empty else 1
-            outlier_cat, ratio = classify_outlier_score(v["viewCount"], channel_avg)
-            # Build card HTML with clickable onClick (using query parameters)
+            outlier_cat, ratio = classify_outlier(v["viewCount"], channel_avg)
             card = f"""
             <div class="video-card" onClick="window.location.href='?video={v['videoId']}&tab={tab_name}'">
                 <div class="thumbnail-container">
@@ -496,24 +504,14 @@ if st.session_state["analyze_clicked"] and st.session_state["channel_id"]:
             grid_html += card
         grid_html += "</div>"
         st.markdown(grid_html, unsafe_allow_html=True)
-    
-    # Check for query parameters (when a card is clicked)
-    qp = st.experimental_get_query_params()
-    if "video" in qp and "tab" in qp:
-        st.session_state["selected_video"] = qp["video"][0]
-        selected_tab = qp["tab"][0]
-        st.experimental_set_query_params()  # clear query params
-    else:
-        st.session_state["selected_video"] = None
 
-    # VIDEOS tab
+    # VIDEOS TAB
     with tabs[0]:
         st.markdown("<div class='subheader'>Long-form Videos</div>", unsafe_allow_html=True)
         if st.session_state["selected_video"] is None:
-            render_video_grid(vids, "videos")
+            render_video_grid(display_vids, all_vids, "videos")
         else:
-            # Show details for selected video from the long-form list
-            sel = next((x for x in vids if x["videoId"] == st.session_state["selected_video"]), None)
+            sel = next((v for v in all_vids if v["videoId"] == st.session_state["selected_video"]), None)
             if sel:
                 st.markdown("<div class='subheader'>Video Details</div>", unsafe_allow_html=True)
                 col1, col2 = st.columns([1,2])
@@ -521,17 +519,16 @@ if st.session_state["analyze_clicked"] and st.session_state["channel_id"]:
                     st.image(sel["thumbnailUrl"], width=300)
                 with col2:
                     st.write(f"**Title:** {sel['title']}")
-                    pub_date = sel["publishedAt"].split("T")[0]
-                    st.write(f"**Published:** {pub_date}")
+                    pub_str = sel["publishedAt"].split("T")[0]
+                    st.write(f"**Published:** {pub_str}")
                     st.write(f"**Views:** {sel['viewCount']:,}")
                     st.write(f"**Likes:** {sel['likeCount']:,}")
                     st.write(f"**Comments:** {sel['commentCount']:,}")
-                # Build a benchmark and simulate performance for chart
                 try:
                     age = (datetime.datetime.now().date() - datetime.datetime.fromisoformat(sel["publishedAt"].replace("Z","+00:00")).date()).days
                 except:
                     age = 1
-                info_map = {v["videoId"]: {"publishedAt": v["publishedAt"], "viewCount": v["viewCount"], "isShort": v["isShort"]} for v in vids}
+                info_map = {v["videoId"]: {"publishedAt": v["publishedAt"], "viewCount": v["viewCount"], "isShort": v["isShort"]} for v in all_vids}
                 df_hist = generate_historical_data(info_map, age, is_short=False)
                 if df_hist.empty:
                     st.warning("Not enough data for benchmark.")
@@ -540,7 +537,7 @@ if st.session_state["analyze_clicked"] and st.session_state["channel_id"]:
                     final_day = min(age-1, bench["day"].max())
                     row = bench.loc[bench["day"] == final_day]
                     channel_avg = row["channel_average"].values[0] if not row.empty else 1
-                    outlier_cat, ratio = classify_outlier_score(sel["viewCount"], channel_avg)
+                    outlier_cat, ratio = classify_outlier(sel["viewCount"], channel_avg)
                     perf_df = simulate_video_performance(sel, bench)
                     fig = go.Figure()
                     fig.add_trace(go.Scatter(
@@ -593,14 +590,14 @@ if st.session_state["analyze_clicked"] and st.session_state["channel_id"]:
             if st.button("Back to Grid", key="back_vid"):
                 st.session_state["selected_video"] = None
                 st.experimental_rerun()
-                
-    # SHORTS tab
+    
+    # SHORTS TAB
     with tabs[1]:
         st.markdown("<div class='subheader'>Shorts</div>", unsafe_allow_html=True)
         if st.session_state["selected_video"] is None:
-            render_video_grid(shorts, "shorts")
+            render_video_grid(display_shorts, all_shorts, "shorts")
         else:
-            sel = next((x for x in shorts if x["videoId"] == st.session_state["selected_video"]), None)
+            sel = next((v for v in all_shorts if v["videoId"] == st.session_state["selected_video"]), None)
             if sel:
                 st.markdown("<div class='subheader'>Short Details</div>", unsafe_allow_html=True)
                 col1, col2 = st.columns([1,2])
@@ -608,8 +605,8 @@ if st.session_state["analyze_clicked"] and st.session_state["channel_id"]:
                     st.image(sel["thumbnailUrl"], width=300)
                 with col2:
                     st.write(f"**Title:** {sel['title']}")
-                    pub_date = sel["publishedAt"].split("T")[0]
-                    st.write(f"**Published:** {pub_date}")
+                    pub_str = sel["publishedAt"].split("T")[0]
+                    st.write(f"**Published:** {pub_str}")
                     st.write(f"**Views:** {sel['viewCount']:,}")
                     st.write(f"**Likes:** {sel['likeCount']:,}")
                     st.write(f"**Comments:** {sel['commentCount']:,}")
@@ -617,7 +614,7 @@ if st.session_state["analyze_clicked"] and st.session_state["channel_id"]:
                     age = (datetime.datetime.now().date() - datetime.datetime.fromisoformat(sel["publishedAt"].replace("Z","+00:00")).date()).days
                 except:
                     age = 1
-                info_map = {v["videoId"]: {"publishedAt": v["publishedAt"], "viewCount": v["viewCount"], "isShort": v["isShort"]} for v in shorts}
+                info_map = {v["videoId"]: {"publishedAt": v["publishedAt"], "viewCount": v["viewCount"], "isShort": v["isShort"]} for v in all_shorts}
                 df_hist = generate_historical_data(info_map, age, is_short=True)
                 if df_hist.empty:
                     st.warning("Not enough data for benchmark.")
@@ -626,7 +623,7 @@ if st.session_state["analyze_clicked"] and st.session_state["channel_id"]:
                     final_day = min(age-1, bench["day"].max())
                     row = bench.loc[bench["day"] == final_day]
                     channel_avg = row["channel_average"].values[0] if not row.empty else 1
-                    outlier_cat, ratio = classify_outlier_score(sel["viewCount"], channel_avg)
+                    outlier_cat, ratio = classify_outlier(sel["viewCount"], channel_avg)
                     perf_df = simulate_video_performance(sel, bench)
                     fig = go.Figure()
                     fig.add_trace(go.Scatter(
