@@ -59,7 +59,6 @@ def set_cached_channel(channel_id, data):
               (channel_id, json.dumps(data)))
     conn.commit()
 
-
 #####################################
 # 2. CONFIGURATION & CSS
 #####################################
@@ -85,16 +84,7 @@ st.markdown("""
     .explanation {
         padding: 1rem; border-left: 4px solid #4285f4; background-color: #f8f9fa; color: #333; margin: 1rem 0;
     }
-    /* Video card styling */
-    .video-card {
-        display: inline-block; width: 300px; margin: 0.5rem; border: 1px solid #ddd;
-        border-radius: 8px; overflow: hidden; text-decoration: none; color: inherit;
-    }
-    .video-card:hover { box-shadow: 0 4px 8px rgba(0,0,0,0.1); }
-    .thumbnail-container img { width: 100%; display: block; }
-    .video-info { padding: 0.5rem; }
-    .video-title { font-size: 1rem; font-weight: 600; margin-bottom: 0.25rem; }
-    .video-stats { font-size: 0.9rem; color: #555; }
+    /* Hide raw HTML video cards; we now use buttons */
 </style>
 """, unsafe_allow_html=True)
 
@@ -102,10 +92,10 @@ st.markdown("<div class='main-header'>YouTube Video Outlier Analysis</div>", uns
 st.markdown("Compare a video’s performance against its channel’s typical performance.")
 
 #####################################
-# 3. HELPER FUNCTIONS (URL, duration)
+# 3. HELPER FUNCTIONS (URL extraction, duration parsing)
 #####################################
 def extract_video_id(url):
-    """Extract video ID from standard, shortened, embed, or shorts URLs."""
+    """Extract video ID from standard, shortened, embed, or Shorts URLs."""
     patterns = [
         r'youtube\.com/watch\?v=([^&\s]+)',
         r'youtu\.be/([^?\s]+)',
@@ -417,7 +407,6 @@ def compute_video_outlier(video, all_details):
 #####################################
 # 6. MAIN UI LOGIC
 #####################################
-# Sidebar: Mode selection
 mode = st.sidebar.radio("Select Mode", options=["Video Analysis", "Channel Analysis"])
 
 if mode == "Video Analysis":
@@ -464,7 +453,7 @@ else:  # Channel Analysis mode
     type_opt = st.radio("Type", options=["Videos", "Shorts"], index=0)
     output_count = st.number_input("Number of videos to display", min_value=1, max_value=50, value=5, step=1)
     
-    # If a video is already selected via query parameter, show its analysis
+    # If a video is selected via query parameters, show its analysis
     params = st.experimental_get_query_params()
     if "video" in params:
         selected_id = params["video"][0]
@@ -509,7 +498,7 @@ else:  # Channel Analysis mode
                 st.stop()
             vid_ids = [v['videoId'] for v in vids]
             all_details = fetch_video_details(vid_ids)
-            # Filter by type
+            # Filter by type based on selection
             if type_opt == "Videos":
                 filtered = [d for d in all_details.values() if not d['isShort']]
             else:
@@ -523,21 +512,10 @@ else:  # Channel Analysis mode
                 sorted_vids = sorted(filtered, key=lambda x: x['viewCount'], reverse=True)
             sorted_vids = sorted_vids[:output_count]
             st.markdown(f"### {channel_name} – {type_opt} ({sort_opt})")
-            cards_html = "<div style='display: flex; flex-wrap: wrap;'>"
+            # Instead of raw HTML cards, list each video as a clickable button
             for vid in sorted_vids:
                 outlier_val = compute_video_outlier(vid, all_details)
                 outlier_disp = f"{outlier_val:.2f}x" if outlier_val is not None else "N/A"
-                card = f"""
-                <a href="?video={vid['videoId']}&tab=videos" class="video-card">
-                    <div class="thumbnail-container">
-                        <img src="https://i.ytimg.com/vi/{vid['videoId']}/mqdefault.jpg" alt="thumbnail">
-                    </div>
-                    <div class="video-info">
-                        <div class="video-title">{vid['title']}</div>
-                        <div class="video-stats">Outlier: {outlier_disp}</div>
-                    </div>
-                </a>
-                """
-                cards_html += card
-            cards_html += "</div>"
-            st.markdown(cards_html, unsafe_allow_html=True)
+                # Create a button for each video. When clicked, update query parameters to load its analysis.
+                if st.button(f"{vid['title']} (Outlier: {outlier_disp})", key=vid['videoId']):
+                    st.experimental_set_query_params(video=vid['videoId'], tab="videos")
