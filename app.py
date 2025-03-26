@@ -11,14 +11,14 @@ st.set_page_config(page_title="YouTube Outlier Calculator", layout="centered")
 st.title("YouTube Outlier Calculator (Approach 3)")
 st.markdown(
     """
-Calculates the outlier ratio for a long-form video using:
+This tool calculates the outlier ratio for a long‑form video using:
 - **Analysis Period:** 795 days  
-- **Middle Band:** 50% (i.e. 25th and 75th percentiles)  
+- **Middle Band:** 50% (i.e. using the 25th and 75th percentiles)  
 - **Formula:**  
 \[
-\text{Outlier} = \frac{V}{\displaystyle \frac{Q_{0.25} + Q_{0.75}}{2}}
+\text{Outlier} = \frac{V_{\text{sim}}}{\displaystyle \frac{Q_{0.25} + Q_{0.75}}{2}}
 \]
-where \(V\) is the target video’s current views.
+where \(V_{\text{sim}}\) is the target video’s simulated cumulative views at 795 days.
     """
 )
 
@@ -107,8 +107,8 @@ def iso_to_date(iso_str):
 def simulate_views(total_views, video_age, target_days):
     """
     Simulate the cumulative views at target_days.
-    If the video is older than target_days, return total_views;
-    otherwise, extrapolate linearly.
+    If the video is older than target_days, return its total_views.
+    Otherwise, extrapolate linearly.
     """
     if video_age >= target_days:
         return total_views
@@ -118,29 +118,35 @@ def simulate_views(total_views, video_age, target_days):
 # ------------------------
 # Core Calculation Functions
 # ------------------------
-ANALYSIS_DAYS = 795         # Fixed analysis period
-BAND_PERCENTAGE = 50        # 50% middle band => 25th & 75th percentiles
+ANALYSIS_DAYS = 795  # Fixed analysis period (days)
+BAND_PERCENTAGE = 50  # Middle band: 50% => use 25th and 75th percentiles
 
-def calculate_outlier(target, benchmarks, target_days):
-    simulated_views = []
+def calculate_outlier(target_sim_views, benchmarks, target_days):
+    """
+    For each benchmark video (excluding the target), simulate its cumulative views at target_days.
+    Then compute the 25th and 75th percentiles of these simulated views, and define:
+        channel_avg = (Q25 + Q75) / 2
+        outlier = target_sim_views / channel_avg
+    """
     today = datetime.date.today()
+    simulated_views_list = []
     for vid, details in benchmarks.items():
         pub_date = iso_to_date(details["publishedAt"])
         vid_age = (today - pub_date).days
         if vid_age < 2:
             continue
         sim_views = simulate_views(details["viewCount"], vid_age, target_days)
-        simulated_views.append(sim_views)
-    if not simulated_views:
+        simulated_views_list.append(sim_views)
+    if not simulated_views_list:
         return None, None
-    Q25 = np.percentile(simulated_views, 25)
-    Q75 = np.percentile(simulated_views, 75)
+    Q25 = np.percentile(simulated_views_list, 25)
+    Q75 = np.percentile(simulated_views_list, 75)
     channel_avg = (Q25 + Q75) / 2
-    outlier_ratio = target["viewCount"] / channel_avg if channel_avg > 0 else None
+    outlier_ratio = target_sim_views / channel_avg if channel_avg > 0 else None
     return channel_avg, outlier_ratio
 
 # ------------------------
-# Streamlit Interface
+# Streamlit App Interface
 # ------------------------
 st.markdown("## Enter Video URL")
 video_url_input = st.text_input("Video URL", placeholder="https://www.youtube.com/watch?v=VIDEO_ID")
@@ -158,9 +164,11 @@ if st.button("Calculate Outlier") and video_url_input:
             st.stop()
         target_pub = iso_to_date(target_video["publishedAt"])
         target_age = (datetime.date.today() - target_pub).days
+        # Simulate target video views at ANALYSIS_DAYS even if it is younger than 795 days.
         if target_age < ANALYSIS_DAYS:
-            st.error(f"Target video is only {target_age} days old; require at least {ANALYSIS_DAYS} days for analysis.")
-            st.stop()
+            target_sim_views = simulate_views(target_video["viewCount"], target_age, ANALYSIS_DAYS)
+        else:
+            target_sim_views = target_video["viewCount"]
     
     with st.spinner("Fetching channel videos..."):
         channel_id = target_video["channelId"]
@@ -173,21 +181,21 @@ if st.button("Calculate Outlier") and video_url_input:
             st.error("No channel videos found.")
             st.stop()
         benchmarks = get_multiple_videos_details(channel_vid_ids, API_KEY)
-        # Exclude the target video
+        # Exclude the target video from the benchmark set.
         if video_id in benchmarks:
             del benchmarks[video_id]
     
     with st.spinner("Calculating outlier ratio..."):
-        channel_avg, outlier = calculate_outlier(target_video, benchmarks, ANALYSIS_DAYS)
+        channel_avg, outlier = calculate_outlier(target_sim_views, benchmarks, ANALYSIS_DAYS)
         if channel_avg is None or outlier is None:
             st.error("Not enough benchmark data to calculate outlier.")
         else:
             st.success("Calculation complete!")
-            st.metric("Target Video Views", f"{target_video['viewCount']:,}")
+            st.metric("Target Video (Simulated 795-day) Views", f"{target_sim_views:,}")
             st.metric("Channel Average Views (795 days)", f"{int(channel_avg):,}")
             st.metric("Outlier Ratio", f"{outlier:.2f}")
             st.markdown("### Formula Recap")
-            st.latex(r"\text{Outlier} = \frac{V}{\frac{Q_{0.25} + Q_{0.75}}{2}}")
+            st.latex(r"\text{Outlier} = \frac{V_{\text{sim}}}{\frac{Q_{0.25}+Q_{0.75}}{2}}")
             st.markdown(
-                "*Where \(V\) is the target video's current views, and \(Q_{0.25}\) and \(Q_{0.75}\) are the 25th and 75th percentiles of the simulated cumulative views at 795 days for the channel's other videos.*"
+                "*Where \(V_{\text{sim}}\) is the target video's simulated cumulative views at 795 days, and \(Q_{0.25}\) and \(Q_{0.75}\) are the 25th and 75th percentiles of the simulated cumulative views (at 795 days) for the channel's other videos.*"
             )
