@@ -85,12 +85,13 @@ def extract_channel_id(url):
     return None
 
 def extract_video_id(url):
-    """Extract video ID from various YouTube URL formats"""
+    """Extract video ID from various YouTube URL formats, including Shorts"""
     patterns = [
         r'youtube\.com/watch\?v=([^&\s]+)',
         r'youtu\.be/([^?\s]+)',
         r'youtube\.com/embed/([^?\s]+)',
-        r'youtube\.com/v/([^?\s]+)'
+        r'youtube\.com/v/([^?\s]+)',
+        r'youtube\.com/shorts/([^?\s]+)'
     ]
     for pattern in patterns:
         match = re.search(pattern, url)
@@ -447,7 +448,7 @@ with st.sidebar:
     )
 
 st.subheader("Enter YouTube Video URL")
-video_url = st.text_input("Video URL:", placeholder="https://www.youtube.com/watch?v=VideoID or https://youtu.be/VideoID")
+video_url = st.text_input("Video URL:", placeholder="https://www.youtube.com/watch?v=VideoID or https://youtu.be/VideoID or https://www.youtube.com/shorts/VideoID")
 
 if st.button("Analyze Video", type="primary") and video_url:
     
