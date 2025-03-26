@@ -21,17 +21,28 @@ st.set_page_config(
     layout="wide"
 )
 
-# Apply custom styling
+# Apply custom styling with explicit text colors
 st.markdown("""
 <style>
-    .main-header {font-size: 2rem; font-weight: 600; margin-bottom: 1rem;}
-    .subheader {font-size: 1.5rem; font-weight: 500; margin: 1rem 0;}
+    .main-header {
+        font-size: 2rem; 
+        font-weight: 600; 
+        margin-bottom: 1rem;
+        color: #333;
+    }
+    .subheader {
+        font-size: 1.5rem; 
+        font-weight: 500; 
+        margin: 1rem 0;
+        color: #333;
+    }
     .metric-card {
         padding: 1rem;
         border-radius: 10px;
         margin-bottom: 1rem;
         text-align: center;
         background-color: #f0f2f6;
+        color: #333;
         box-shadow: 0 2px 5px rgba(0,0,0,0.1);
     }
     .outlier-high {color: #1e8e3e; font-weight: bold;}
@@ -41,6 +52,7 @@ st.markdown("""
         padding: 1rem;
         border-left: 4px solid #4285f4;
         background-color: #f8f9fa;
+        color: #333;
         margin: 1rem 0;
     }
 </style>
