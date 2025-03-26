@@ -297,13 +297,13 @@ def save_channel_videos_to_db(channel_id, video_list):
         conn.commit()
 
 ############################################
-# 4. OUTLIER ANALYSIS FUNCTIONS
+# 4. OUTLIER ANALYSIS FUNCTIONS (HIDDEN)
 ############################################
 
 def generate_historical_data(video_map, max_days, is_short=None):
     """
     Build a simple historical dataset for each video up to max_days.
-    (A naive linear approach: cumulative views = fraction * total views.)
+    (Naive linear approach: cumulative_views = (day+1)/limit * total views.)
     """
     today = datetime.datetime.now().date()
     data = []
@@ -325,7 +325,8 @@ def generate_historical_data(video_map, max_days, is_short=None):
 
 def calculate_benchmark(df):
     """
-    Calculate the median, lower (25th) and upper (75th) bands, then channel average.
+    Calculate the median, 25th (lower) and 75th (upper) quantiles,
+    and then compute channel_average = (lower + upper) / 2.
     """
     if df.empty:
         return pd.DataFrame()
@@ -352,7 +353,7 @@ def simulate_video_performance(video_info, bench_df):
     return pd.DataFrame(data)
 
 def calculate_outlier_score(current_views, channel_avg):
-    """Calculate outlier score as the ratio of current views to channel average."""
+    """Calculate outlier score as ratio."""
     if channel_avg <= 0:
         return 0
     return current_views / channel_avg
@@ -377,7 +378,6 @@ def classify_outlier(view_count, channel_avg):
 # 5. SESSION STATE & USER INPUT
 ############################################
 
-# Initialize session state if not set
 if "channel_id" not in st.session_state:
     st.session_state["channel_id"] = None
 if "selected_sort" not in st.session_state:
@@ -417,7 +417,7 @@ with st.container():
 ############################################
 
 if st.session_state["analyze_clicked"] and st.session_state["channel_id"]:
-    # Load all videos from DB; if not, fetch from API and save
+    # Load channel videos from DB; if empty, fetch and save
     videos_db = load_channel_videos_from_db(st.session_state["channel_id"])
     if not videos_db:
         with st.spinner("Fetching channel videos from YouTube..."):
@@ -444,33 +444,30 @@ if st.session_state["analyze_clicked"] and st.session_state["channel_id"]:
                         })
                 save_channel_videos_to_db(st.session_state["channel_id"], final_list)
                 videos_db = load_channel_videos_from_db(st.session_state["channel_id"])
-    # Separate complete lists for long-form and shorts (for outlier computation)
+    # Separate lists for long-form videos and shorts
     all_vids = [v for v in videos_db if not v["isShort"]]
     all_shorts = [v for v in videos_db if v["isShort"]]
-    # For display, use the slice selected by the user
-    sort_key = st.session_state["selected_sort"]
-    if sort_key == "Latest":
+    if st.session_state["selected_sort"] == "Latest":
         all_vids.sort(key=lambda x: x["publishedAt"], reverse=True)
         all_shorts.sort(key=lambda x: x["publishedAt"], reverse=True)
-    elif sort_key == "Popular":
+    elif st.session_state["selected_sort"] == "Popular":
         all_vids.sort(key=lambda x: x["viewCount"], reverse=True)
         all_shorts.sort(key=lambda x: x["viewCount"], reverse=True)
     display_vids = all_vids[:st.session_state["selected_count"]]
     display_shorts = all_shorts[:st.session_state["selected_count"]]
 
-    # Use new st.query_params API instead of experimental version
-    qp = st.query_params()
+    # Use new st.query_params property (without parentheses)
+    qp = st.query_params
     if "video" in qp and "tab" in qp:
         st.session_state["selected_video"] = qp["video"][0]
     else:
         st.session_state["selected_video"] = None
 
-    # Two tabs: Videos and Shorts
     tabs = st.tabs(["Videos", "Shorts"])
-    
+
     # Function to render a grid of video cards
     def render_video_grid(display_list, full_list, tab_name):
-        # Compute benchmark on the full list for that type (not just the display slice)
+        # Use the full list (not the sliced display list) for benchmark computation
         info_map = {v["videoId"]: {"publishedAt": v["publishedAt"], "viewCount": v["viewCount"], "isShort": v["isShort"]} for v in full_list}
         grid_html = "<div class='video-grid'>"
         for v in display_list:
@@ -589,8 +586,9 @@ if st.session_state["analyze_clicked"] and st.session_state["channel_id"]:
                     """, unsafe_allow_html=True)
             if st.button("Back to Grid", key="back_vid"):
                 st.session_state["selected_video"] = None
+                st.set_query_params()  # Clear query parameters
                 st.experimental_rerun()
-    
+
     # SHORTS TAB
     with tabs[1]:
         st.markdown("<div class='subheader'>Shorts</div>", unsafe_allow_html=True)
@@ -675,4 +673,5 @@ if st.session_state["analyze_clicked"] and st.session_state["channel_id"]:
                     """, unsafe_allow_html=True)
             if st.button("Back to Grid", key="back_shorts"):
                 st.session_state["selected_video"] = None
+                st.set_query_params()  # Clear query parameters
                 st.experimental_rerun()
