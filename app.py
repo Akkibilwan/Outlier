@@ -550,7 +550,8 @@ if st.button("Analyze Video", type="primary") and video_url:
         st.info(f"Building benchmark from {len(detailed_videos)} videos: {shorts_count} shorts and {longform_count} long-form videos")
         
         # Generate historical data for benchmark
-        max_days = video_age + 10  # Add buffer for future projection
+        # Change: Set max_days to video_age only, so simulation calculates views only till the current age of the video
+        max_days = video_age
         benchmark_df = generate_historical_data(detailed_videos, max_days, is_short_filter)
         
         if benchmark_df.empty:
