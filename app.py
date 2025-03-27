@@ -5,6 +5,7 @@ import numpy as np
 import datetime
 import plotly.graph_objects as go
 import re
+import sqlite3
 from datetime import timedelta
 
 # Set YouTube API Key from secrets
@@ -408,36 +409,46 @@ def simulate_video_performance(video_data, benchmark_data):
     return pd.DataFrame(data)
 
 # ------------------------
+# SQLite Setup for History
+# ------------------------
+def init_db():
+    conn = sqlite3.connect("youtube_history.db")
+    c = conn.cursor()
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS channel_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            channel_url TEXT,
+            num_videos INTEGER,
+            video_type TEXT,
+            sort_filter TEXT,
+            timestamp TEXT
+        )
+    """)
+    conn.commit()
+    return conn
+
+def save_history(conn, channel_url, num_videos, video_type, sort_filter):
+    c = conn.cursor()
+    timestamp = datetime.datetime.now().isoformat()
+    c.execute("""
+        INSERT INTO channel_history (channel_url, num_videos, video_type, sort_filter, timestamp)
+        VALUES (?, ?, ?, ?, ?)
+    """, (channel_url, num_videos, video_type, sort_filter, timestamp))
+    conn.commit()
+
+# ------------------------
 # Main App Logic
 # ------------------------
 with st.sidebar:
     st.header("Settings")
     
-    # Option to include all videos or limit the number of videos
-    include_all = st.checkbox("Include all videos", value=False)
-    if include_all:
-        num_videos = None
-    else:
-        num_videos = st.slider(
-            "Number of videos to include in analysis",
-            min_value=10,
-            max_value=200,
-            value=50,
-            step=10,
-            help="More videos creates a more accurate benchmark"
-        )
-    
-    video_type = st.radio(
-        "Video Type to Compare Against",
-        options=["all", "long_form", "shorts", "auto"],
-        format_func=lambda x: "All Videos" if x == "all" else (
-            "Shorts Only" if x == "shorts" else (
-                "Long-form Only" if x == "long_form" else "Auto-detect (match video type)"
-            )
-        ),
-        index=3
+    # Choose Analysis Mode
+    analysis_mode = st.radio(
+        "Analysis Mode",
+        options=["Single Video", "Channel Analysis"]
     )
     
+    # Common slider for benchmark percentile range
     percentile_range = st.slider(
         "Middle Percentage Range for Band",
         min_value=10,
@@ -446,176 +457,295 @@ with st.sidebar:
         step=5,
         help="Middle percentage range for typical performance (e.g., 50 = 25th to 75th percentile)"
     )
+    
+    if analysis_mode == "Channel Analysis":
+        channel_url = st.text_input("Channel URL:", placeholder="https://www.youtube.com/channel/ChannelID or other formats")
+        num_videos = st.slider(
+            "Number of videos to include in analysis",
+            min_value=5,
+            max_value=150,
+            value=50,
+            step=5,
+            help="More videos creates a more accurate benchmark"
+        )
+        video_type_option = st.radio(
+            "Video Type to Compare Against",
+            options=["All Videos", "Long-form Only", "Shorts Only"],
+            index=0
+        )
+        # Map video type to filter values used in functions
+        if video_type_option == "Long-form Only":
+            video_type_filter = "long_form"
+        elif video_type_option == "Shorts Only":
+            video_type_filter = "shorts"
+        else:
+            video_type_filter = "all"
+        
+        sort_filter = st.selectbox(
+            "Sort Results By",
+            options=["Newest", "Oldest", "Popular", "Outlier"]
+        )
+    else:
+        video_url = st.text_input("Video URL:", placeholder="https://www.youtube.com/watch?v=VideoID or https://youtu.be/VideoID or https://www.youtube.com/shorts/VideoID")
 
-st.subheader("Enter YouTube Video URL")
-video_url = st.text_input("Video URL:", placeholder="https://www.youtube.com/watch?v=VideoID or https://youtu.be/VideoID or https://www.youtube.com/shorts/VideoID")
+# For SQLite history (channel analysis only)
+if analysis_mode == "Channel Analysis":
+    conn = init_db()
 
-if st.button("Analyze Video", type="primary") and video_url:
-    
-    video_id = extract_video_id(video_url)
-    if not video_id:
-        st.error("Could not extract a valid video ID from the provided URL. Please check the URL format.")
-        st.stop()
-    
-    with st.spinner("Fetching video details..."):
-        video_details = fetch_single_video(video_id, yt_api_key)
-        if not video_details:
-            st.error("Failed to fetch video details. Please check the video URL.")
+if st.button("Analyze Video" if analysis_mode=="Single Video" else "Analyze Channel"):
+    if analysis_mode == "Single Video":
+        if not video_url:
+            st.error("Please enter a video URL.")
             st.stop()
-        channel_id = video_details['channelId']
-        published_date = datetime.datetime.fromisoformat(video_details['publishedAt'].replace('Z', '+00:00')).date()
-        video_age = (datetime.datetime.now().date() - published_date).days
-    
-    with st.spinner("Fetching channel videos for benchmark..."):
-        channel_videos, channel_name, channel_stats = fetch_channel_videos(channel_id, num_videos, yt_api_key)
-        if not channel_videos:
-            st.error("Failed to fetch channel videos.")
+        video_id = extract_video_id(video_url)
+        if not video_id:
+            st.error("Could not extract a valid video ID from the provided URL. Please check the URL format.")
             st.stop()
-    
-    st.subheader("Video Information")
-    col1, col2 = st.columns([1, 3])
-    with col1:
-        if video_details['thumbnailUrl']:
-            st.image(video_details['thumbnailUrl'], width=200)
-    with col2:
-        st.markdown(f"**Title:** {video_details['title']}")
-        st.markdown(f"**Channel:** {channel_name}")
-        st.markdown(f"**Published:** {published_date} ({video_age} days ago)")
-        minutes, seconds = divmod(video_details['duration'], 60)
-        hours, minutes = divmod(minutes, 60)
-        duration_str = f"{hours}h {minutes}m {seconds}s" if hours else f"{minutes}m {seconds}s"
-        st.markdown(f"**Duration:** {duration_str} ({'Short' if video_details['isShort'] else 'Long-form'})")
-        metric_cols = st.columns(3)
-        with metric_cols[0]:
-            st.metric("Views", f"{video_details['viewCount']:,}")
-        with metric_cols[1]:
-            st.metric("Likes", f"{video_details['likeCount']:,}")
-        with metric_cols[2]:
-            st.metric("Comments", f"{video_details['commentCount']:,}")
-    
-    with st.spinner("Calculating benchmark and outlier score..."):
-        if video_type == "auto":
+        
+        with st.spinner("Fetching video details..."):
+            video_details = fetch_single_video(video_id, yt_api_key)
+            if not video_details:
+                st.error("Failed to fetch video details. Please check the video URL.")
+                st.stop()
+            channel_id = video_details['channelId']
+            published_date = datetime.datetime.fromisoformat(video_details['publishedAt'].replace('Z', '+00:00')).date()
+            video_age = (datetime.datetime.now().date() - published_date).days
+        
+        with st.spinner("Fetching channel videos for benchmark..."):
+            channel_videos, channel_name, channel_stats = fetch_channel_videos(channel_id, None, yt_api_key)
+            if not channel_videos:
+                st.error("Failed to fetch channel videos.")
+                st.stop()
+        
+        st.subheader("Video Information")
+        col1, col2 = st.columns([1, 3])
+        with col1:
+            if video_details['thumbnailUrl']:
+                st.image(video_details['thumbnailUrl'], width=200)
+        with col2:
+            st.markdown(f"**Title:** {video_details['title']}")
+            st.markdown(f"**Channel:** {channel_name}")
+            st.markdown(f"**Published:** {published_date} ({video_age} days ago)")
+            minutes, seconds = divmod(video_details['duration'], 60)
+            hours, minutes = divmod(minutes, 60)
+            duration_str = f"{hours}h {minutes}m {seconds}s" if hours else f"{minutes}m {seconds}s"
+            st.markdown(f"**Duration:** {duration_str} ({'Short' if video_details['isShort'] else 'Long-form'})")
+            metric_cols = st.columns(3)
+            with metric_cols[0]:
+                st.metric("Views", f"{video_details['viewCount']:,}")
+            with metric_cols[1]:
+                st.metric("Likes", f"{video_details['likeCount']:,}")
+            with metric_cols[2]:
+                st.metric("Comments", f"{video_details['commentCount']:,}")
+        
+        with st.spinner("Calculating benchmark and outlier score..."):
+            # For single video analysis, use auto-detect video type
             is_short_filter = video_details['isShort']
             video_type_str = "Shorts" if is_short_filter else "Long-form Videos"
-        elif video_type == "shorts":
-            is_short_filter = True
-            video_type_str = "Shorts"
-        elif video_type == "long_form":
-            is_short_filter = False
-            video_type_str = "Long-form Videos"
-        else:
-            is_short_filter = None
-            video_type_str = "All Videos"
+            
+            video_ids = [v['videoId'] for v in channel_videos]
+            detailed_videos = fetch_video_details(video_ids, yt_api_key)
+            if video_id in detailed_videos:
+                del detailed_videos[video_id]
+            
+            shorts_count = sum(1 for _, details in detailed_videos.items() if details['isShort'])
+            longform_count = len(detailed_videos) - shorts_count
+            if is_short_filter is True and shorts_count < 5:
+                st.warning(f"Not enough Shorts in this channel (found {shorts_count}). Using all videos instead.")
+                is_short_filter = None
+                video_type_str = "All Videos"
+            elif is_short_filter is False and longform_count < 5:
+                st.warning(f"Not enough Long-form videos in this channel (found {longform_count}). Using all videos instead.")
+                is_short_filter = None
+                video_type_str = "All Videos"
+            
+            st.info(f"Building benchmark from {len(detailed_videos)} videos: {shorts_count} shorts and {longform_count} long-form videos")
+            
+            max_days = video_age
+            benchmark_df = generate_historical_data(detailed_videos, max_days, is_short_filter)
+            if benchmark_df.empty:
+                st.error("Not enough data to create a benchmark. Try including more videos or changing the video type filter.")
+                st.stop()
+            
+            benchmark_stats = calculate_benchmark(benchmark_df, percentile_range)
+            video_performance = simulate_video_performance(video_details, benchmark_stats)
+            day_index = min(video_age, len(benchmark_stats) - 1)
+            benchmark_median = benchmark_stats.loc[day_index, 'median']
+            benchmark_lower = benchmark_stats.loc[day_index, 'lower_band']
+            benchmark_upper = benchmark_stats.loc[day_index, 'upper_band']
+            channel_average = benchmark_stats.loc[day_index, 'channel_average']
+            outlier_score = calculate_outlier_score(video_details['viewCount'], channel_average)
+            
+            fig = create_performance_chart(benchmark_stats, video_performance, 
+                                          video_details['title'][:40] + "..." if len(video_details['title']) > 40 else video_details['title'])
+            st.plotly_chart(fig, use_container_width=True)
+            
+            st.subheader("Outlier Analysis")
+            if outlier_score >= 2.0:
+                outlier_category = "Significant Positive Outlier"
+                outlier_class = "outlier-high"
+            elif outlier_score >= 1.5:
+                outlier_category = "Positive Outlier"
+                outlier_class = "outlier-high"
+            elif outlier_score >= 1.2:
+                outlier_category = "Slight Positive Outlier"
+                outlier_class = "outlier-normal"
+            elif outlier_score >= 0.8:
+                outlier_category = "Normal Performance"
+                outlier_class = "outlier-normal"
+            elif outlier_score >= 0.5:
+                outlier_category = "Slight Negative Outlier"
+                outlier_class = "outlier-low"
+            else:
+                outlier_category = "Significant Negative Outlier"
+                outlier_class = "outlier-low"
+            
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.markdown(f"""
+                <div class='metric-card'>
+                    <div>Current Views</div>
+                    <div style='font-size: 24px; font-weight: bold;'>{video_details['viewCount']:,}</div>
+                </div>
+                """, unsafe_allow_html=True)
+            with col2:
+                st.markdown(f"""
+                <div class='metric-card'>
+                    <div>Channel Average</div>
+                    <div style='font-size: 24px; font-weight: bold;'>{int(channel_average):,}</div>
+                </div>
+                """, unsafe_allow_html=True)
+            with col3:
+                st.markdown(f"""
+                <div class='metric-card'>
+                    <div>Outlier Score</div>
+                    <div style='font-size: 24px; font-weight: bold;' class='{outlier_class}'>{outlier_score:.2f}</div>
+                    <div>{outlier_category}</div>
+                </div>
+                """, unsafe_allow_html=True)
+            
+            st.markdown(f"""
+            <div class='explanation'>
+                <p><strong>What this means:</strong></p>
+                <p>An outlier score of <strong>{outlier_score:.2f}</strong> means this video has <strong>{outlier_score:.2f}x</strong> the views compared to the channel's average at the same age.</p>
+                <ul>
+                    <li>1.0 = Exactly average performance</li>
+                    <li>&gt;1.0 = Outperforming channel average</li>
+                    <li>&lt;1.0 = Underperforming channel average</li>
+                </ul>
+            </div>
+            """, unsafe_allow_html=True)
+            
+            st.subheader("Detailed Performance Metrics")
+            col1, col2 = st.columns(2)
+            with col1:
+                if benchmark_median > 0:
+                    vs_median_pct = ((video_details['viewCount'] / benchmark_median) - 1) * 100
+                    st.metric("Compared to Median", f"{vs_median_pct:+.1f}%")
+                if channel_average > 0:
+                    vs_avg_pct = ((video_details['viewCount'] / channel_average) - 1) * 100
+                    st.metric("Compared to Channel Average", f"{vs_avg_pct:+.1f}%")
+            with col2:
+                if benchmark_upper > 0:
+                    vs_upper_pct = ((video_details['viewCount'] / benchmark_upper) - 1) * 100
+                    st.metric("Compared to Upper Band", f"{vs_upper_pct:+.1f}%")
+                if benchmark_lower > 0:
+                    vs_lower_pct = ((video_details['viewCount'] / benchmark_lower) - 1) * 100
+                    st.metric("Compared to Lower Band", f"{vs_lower_pct:+.1f}%")
+    
+    else:  # Channel Analysis Mode
+        if not channel_url:
+            st.error("Please enter a channel URL.")
+            st.stop()
+        channel_id = extract_channel_id(channel_url)
+        if not channel_id:
+            st.error("Could not extract a valid channel ID from the provided URL. Please check the URL format.")
+            st.stop()
+        
+        with st.spinner("Fetching channel videos..."):
+            channel_videos, channel_name, channel_stats = fetch_channel_videos(channel_id, num_videos, yt_api_key)
+            if not channel_videos:
+                st.error("Failed to fetch channel videos.")
+                st.stop()
+        
+        # Save channel analysis settings to SQLite
+        save_history(conn, channel_url, num_videos, video_type_filter, sort_filter)
+        
+        st.subheader(f"Channel Analysis for: {channel_name}")
+        st.markdown(f"Total videos fetched: **{len(channel_videos)}**")
         
         video_ids = [v['videoId'] for v in channel_videos]
         detailed_videos = fetch_video_details(video_ids, yt_api_key)
-        if video_id in detailed_videos:
-            del detailed_videos[video_id]
         
-        shorts_count = sum(1 for _, details in detailed_videos.items() if details['isShort'])
-        longform_count = len(detailed_videos) - shorts_count
-        if is_short_filter is True and shorts_count < 5:
-            st.warning(f"Not enough Shorts in this channel (found {shorts_count}). Using all videos instead.")
-            is_short_filter = None
-            video_type_str = "All Videos"
-        elif is_short_filter is False and longform_count < 5:
-            st.warning(f"Not enough Long-form videos in this channel (found {longform_count}). Using all videos instead.")
-            is_short_filter = None
-            video_type_str = "All Videos"
+        # Filter based on video type if not "all"
+        if video_type_filter == "long_form":
+            detailed_videos = {vid: det for vid, det in detailed_videos.items() if not det['isShort']}
+        elif video_type_filter == "shorts":
+            detailed_videos = {vid: det for vid, det in detailed_videos.items() if det['isShort']}
         
-        st.info(f"Building benchmark from {len(detailed_videos)} videos: {shorts_count} shorts and {longform_count} long-form videos")
-        
-        # Limit simulation to the current age of the video
-        max_days = video_age
-        benchmark_df = generate_historical_data(detailed_videos, max_days, is_short_filter)
-        if benchmark_df.empty:
-            st.error("Not enough data to create a benchmark. Try including more videos or changing the video type filter.")
+        if not detailed_videos:
+            st.error("No videos found after applying the video type filter.")
             st.stop()
         
+        # Build a benchmark based on videos older than 3 days (for reliability)
+        today = datetime.datetime.now().date()
+        video_data_list = []
+        max_age = 0
+        for vid, det in detailed_videos.items():
+            try:
+                pub_date = datetime.datetime.fromisoformat(det['publishedAt'].replace('Z', '+00:00')).date()
+                age = (today - pub_date).days
+                det['age'] = age
+                if age > max_age:
+                    max_age = age
+            except:
+                det['age'] = 0
+            video_data_list.append(det)
+        
+        # Exclude very new videos (<3 days) from benchmark calculation
+        benchmark_input = {vid: det for vid, det in detailed_videos.items() if det['age'] >= 3}
+        if not benchmark_input:
+            st.error("Not enough historical data (videos older than 3 days) to create a benchmark.")
+            st.stop()
+        
+        benchmark_df = generate_historical_data(benchmark_input, max_age, 
+                                                None if video_type_filter=="all" else (video_type_filter=="shorts"))
+        if benchmark_df.empty:
+            st.error("Not enough data to create a benchmark.")
+            st.stop()
         benchmark_stats = calculate_benchmark(benchmark_df, percentile_range)
-        video_performance = simulate_video_performance(video_details, benchmark_stats)
-        day_index = min(video_age, len(benchmark_stats) - 1)
-        if day_index < 0:
-            day_index = 0
-        benchmark_median = benchmark_stats.loc[day_index, 'median']
-        benchmark_lower = benchmark_stats.loc[day_index, 'lower_band']
-        benchmark_upper = benchmark_stats.loc[day_index, 'upper_band']
-        channel_average = benchmark_stats.loc[day_index, 'channel_average']
-        outlier_score = calculate_outlier_score(video_details['viewCount'], channel_average)
         
-        fig = create_performance_chart(benchmark_stats, video_performance, 
-                                      video_details['title'][:40] + "..." if len(video_details['title']) > 40 else video_details['title'])
-        st.plotly_chart(fig, use_container_width=True)
+        # Calculate outlier score for each video based on its age
+        analysis_results = []
+        for vid, det in detailed_videos.items():
+            age = det['age']
+            if age < 3 or len(benchmark_stats) == 0:
+                outlier_score = None
+            else:
+                day_index = min(age, len(benchmark_stats) - 1)
+                channel_avg = benchmark_stats.loc[day_index, 'channel_average']
+                outlier_score = det['viewCount'] / channel_avg if channel_avg > 0 else 0
+            analysis_results.append({
+                "Video ID": vid,
+                "Title": det['title'],
+                "Published": det['publishedAt'][:10],
+                "Age (days)": age,
+                "Views": det['viewCount'],
+                "Outlier Score": outlier_score,
+                "Type": "Shorts" if det['isShort'] else "Long-form"
+            })
         
-        st.subheader("Outlier Analysis")
-        if outlier_score >= 2.0:
-            outlier_category = "Significant Positive Outlier"
-            outlier_class = "outlier-high"
-        elif outlier_score >= 1.5:
-            outlier_category = "Positive Outlier"
-            outlier_class = "outlier-high"
-        elif outlier_score >= 1.2:
-            outlier_category = "Slight Positive Outlier"
-            outlier_class = "outlier-normal"
-        elif outlier_score >= 0.8:
-            outlier_category = "Normal Performance"
-            outlier_class = "outlier-normal"
-        elif outlier_score >= 0.5:
-            outlier_category = "Slight Negative Outlier"
-            outlier_class = "outlier-low"
-        else:
-            outlier_category = "Significant Negative Outlier"
-            outlier_class = "outlier-low"
+        results_df = pd.DataFrame(analysis_results)
         
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            st.markdown(f"""
-            <div class='metric-card'>
-                <div>Current Views</div>
-                <div style='font-size: 24px; font-weight: bold;'>{video_details['viewCount']:,}</div>
-            </div>
-            """, unsafe_allow_html=True)
-        with col2:
-            st.markdown(f"""
-            <div class='metric-card'>
-                <div>Channel Average</div>
-                <div style='font-size: 24px; font-weight: bold;'>{int(channel_average):,}</div>
-            </div>
-            """, unsafe_allow_html=True)
-        with col3:
-            st.markdown(f"""
-            <div class='metric-card'>
-                <div>Outlier Score</div>
-                <div style='font-size: 24px; font-weight: bold;' class='{outlier_class}'>{outlier_score:.2f}</div>
-                <div>{outlier_category}</div>
-            </div>
-            """, unsafe_allow_html=True)
+        # Apply sorting filter
+        if sort_filter == "Newest":
+            results_df = results_df.sort_values(by="Published", ascending=False)
+        elif sort_filter == "Oldest":
+            results_df = results_df.sort_values(by="Published", ascending=True)
+        elif sort_filter == "Popular":
+            results_df = results_df.sort_values(by="Views", ascending=False)
+        elif sort_filter == "Outlier":
+            results_df = results_df.sort_values(by="Outlier Score", ascending=False, na_position='last')
         
-        st.markdown(f"""
-        <div class='explanation'>
-            <p><strong>What this means:</strong></p>
-            <p>An outlier score of <strong>{outlier_score:.2f}</strong> means this video has <strong>{outlier_score:.2f}x</strong> the views compared to the channel's average at the same age.</p>
-            <ul>
-                <li>1.0 = Exactly average performance</li>
-                <li>&gt;1.0 = Outperforming channel average</li>
-                <li>&lt;1.0 = Underperforming channel average</li>
-            </ul>
-        </div>
-        """, unsafe_allow_html=True)
-        
-        st.subheader("Detailed Performance Metrics")
-        col1, col2 = st.columns(2)
-        with col1:
-            if benchmark_median > 0:
-                vs_median_pct = ((video_details['viewCount'] / benchmark_median) - 1) * 100
-                st.metric("Compared to Median", f"{vs_median_pct:+.1f}%")
-            if channel_average > 0:
-                vs_avg_pct = ((video_details['viewCount'] / channel_average) - 1) * 100
-                st.metric("Compared to Channel Average", f"{vs_avg_pct:+.1f}%")
-        with col2:
-            if benchmark_upper > 0:
-                vs_upper_pct = ((video_details['viewCount'] / benchmark_upper) - 1) * 100
-                st.metric("Compared to Upper Band", f"{vs_upper_pct:+.1f}%")
-            if benchmark_lower > 0:
-                vs_lower_pct = ((video_details['viewCount'] / benchmark_lower) - 1) * 100
-                st.metric("Compared to Lower Band", f"{vs_lower_pct:+.1f}%")
+        st.subheader("Channel Videos Outlier Analysis")
+        st.dataframe(results_df.reset_index(drop=True))
